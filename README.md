@@ -1,6 +1,6 @@
 # Ingeniería de Software II · Servicio de notificaciones
 
-> Funciones en la nube que envían las notificaciones push de la plataforma de aula de **Ingeniería de Software II (2016702)**
+> Funciones en la nube de la plataforma de aula de **Ingeniería de Software II (2016702)**: envían las notificaciones push y califican el quiz
 > Universidad Nacional de Colombia · Departamento de Ingeniería de Sistemas e Industrial · 2026-II
 
 **Plataforma:** https://ingesoftun4l.com · **Código de la plataforma:** [OldHus/isw2-pwa](https://github.com/OldHus/isw2-pwa)
@@ -34,13 +34,16 @@ Todo el servicio está en un solo archivo: [`functions/src/index.ts`](functions/
 
 ### Reaccionan a eventos de la base de datos
 
-| Función | Se dispara cuando se crea un documento en | Qué notifica |
+| Función | Se dispara cuando se crea un documento en | Qué hace |
 |---|---|---|
-| `onPostCreated` | `cursos/{courseId}/posts/{postId}` | Nueva publicación en el muro, con los primeros 60 caracteres del texto. |
-| `onPollStarted` | `cursos/{courseId}/encuestas/{encuestaId}` | Encuesta abierta, con la pregunta. |
-| `onQuizLaunched` | `cursos/{courseId}/sesionQuiz/{sesionId}` | Pregunta de quiz en vivo, con el enunciado. |
+| `onPostCreated` | `cursos/{courseId}/posts/{postId}` | Notifica la nueva publicación en el muro, con los primeros 60 caracteres del texto. |
+| `onPollStarted` | `cursos/{courseId}/encuestas/{encuestaId}` | Notifica la encuesta abierta, con la pregunta. |
+| `onQuizLaunched` | `cursos/{courseId}/sesionQuiz/{sesionId}` | Notifica la pregunta de quiz en vivo, con el enunciado. |
+| `onQuizAnswerCreated` | `cursos/{courseId}/sesionQuiz/{sesionId}/respuestas/{uid}` | Califica la respuesta: decide si es correcta y calcula el puntaje según el tiempo. |
 
-Cada una envía dos mensajes: el aviso a los estudiantes y una confirmación al docente. El título del aviso se elige al azar de una lista, por eso a veces llega "🚀 Deploy a producción" y otras "🐛 Debuggea esto rápido".
+Las tres primeras envían dos mensajes: el aviso a los estudiantes y una confirmación al docente. El título del aviso se elige al azar de una lista, por eso a veces llega "🚀 Deploy a producción" y otras "🐛 Debuggea esto rápido".
+
+La cuarta no notifica nada. Cuando un estudiante responde, calcula el puntaje con la hora del servidor y lo escribe en la respuesta. Si la aplicación manda un puntaje, se sobrescribe.
 
 ### Las invoca la plataforma
 
@@ -66,10 +69,10 @@ Quien publica no necesita saber cuántos dispositivos hay ni cuáles son.
 
 | Concepto | Dónde verlo |
 |---|---|
-| **Arquitectura dirigida por eventos** | Las tres funciones `onDocumentCreated`: nadie las llama, reaccionan a un hecho que ya ocurrió. |
+| **Arquitectura dirigida por eventos** | Las cuatro funciones `onDocumentCreated`: nadie las llama, reaccionan a un hecho que ya ocurrió. |
 | **Bajo acoplamiento** | La plataforma no conoce este servicio. Se puede apagar, cambiar o reescribir sin tocar una línea de `isw2-pwa`. |
 | **Publicador/suscriptor** | Los temas de mensajería: el patrón Observer llevado a un sistema distribuido. |
-| **Nunca confíes en el cliente** | `subscribeToNotifications` exige sesión iniciada y averigua el curso y el rol consultando la base de datos desde el servidor. El cliente no puede decir "soy docente". |
+| **Nunca confíes en el cliente** | `subscribeToNotifications` exige sesión iniciada y averigua el curso y el rol consultando la base de datos desde el servidor. El cliente no puede decir "soy docente". Y `onQuizAnswerCreated` calcula el puntaje en el servidor: el cliente tampoco puede decir "saqué 1000". |
 | **Validación de entradas** | `requireToken` rechaza la petición si el dato no llega o no es del tipo esperado. |
 | **Errores con significado** | `HttpsError` con códigos como `unauthenticated`, `invalid-argument` y `failed-precondition`, en lugar de un error genérico. |
 | **Funciones pequeñas** | `studentTopic`, `teacherTopic`, `topicForRole`, `pickRandom`: cada una hace una sola cosa y tiene un nombre que la explica. |
@@ -124,4 +127,4 @@ El despliegue apunta al proyecto de Firebase del curso y requiere permisos sobre
 - ¿Por qué el rol se consulta en el servidor en lugar de recibirlo como parámetro desde la aplicación? ¿Qué podría hacer un usuario malintencionado si fuera al revés?
 - Enviar a un tema o enviar a cada dispositivo por separado: ¿qué se gana y qué se pierde con cada opción?
 - Los textos de las notificaciones están escritos en el código. ¿Dónde los pondrías para poder cambiarlos sin volver a desplegar?
-- Las tres funciones de eventos se parecen mucho entre sí. ¿Vale la pena unificarlas? ¿Qué principio de diseño estaría en juego?
+- Las tres funciones de notificación se parecen mucho entre sí. ¿Vale la pena unificarlas? ¿Qué principio de diseño estaría en juego?

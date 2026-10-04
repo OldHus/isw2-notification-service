@@ -4,6 +4,7 @@ import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { initializeApp } from "firebase-admin/app";
 import { getMessaging } from "firebase-admin/messaging";
 import { getFirestore } from "firebase-admin/firestore";
+import type { DocumentData } from "firebase-admin/firestore";
 
 setGlobalOptions({ maxInstances: 10 });
 
@@ -157,3 +158,66 @@ export const unsubscribeFromNotifications = onCall(async (request) => {
   await getMessaging().unsubscribeFromTopic([token], topic);
   return { topic };
 });
+
+const MAX_SCORE = 1000;
+const MIN_SCORE_IF_CORRECT = 100;
+
+function computeScore(isCorrect: boolean, responseTimeMillis: number, durationSeconds: number): number {
+  if (!isCorrect) return 0;
+  const durationMillis = Math.max(durationSeconds * 1000, 1);
+  const ratio = Math.min(1, Math.max(0, responseTimeMillis / durationMillis));
+  const score = MAX_SCORE - ratio * (MAX_SCORE - MIN_SCORE_IF_CORRECT);
+  return Math.min(MAX_SCORE, Math.max(MIN_SCORE_IF_CORRECT, Math.round(score)));
+}
+
+function readCorrectOptionIndex(privateKey: DocumentData | undefined, session: DocumentData): number | null {
+  const fromKey: unknown = privateKey?.indiceRespuestaCorrecta;
+  if (typeof fromKey === "number") return fromKey;
+  const fromSession: unknown = session.indiceRespuestaCorrecta;
+  return typeof fromSession === "number" ? fromSession : null;
+}
+
+export const onQuizAnswerCreated = onDocumentCreated(
+  "cursos/{courseId}/sesionQuiz/{sesionId}/respuestas/{uid}",
+  async (event) => {
+    const answerSnapshot = event.data;
+    if (!answerSnapshot) return;
+
+    const { courseId, sesionId, uid } = event.params;
+    const sessionRef = getFirestore().doc(`cursos/${courseId}/sesionQuiz/${sesionId}`);
+    const [sessionSnapshot, keySnapshot] = await getFirestore().getAll(
+      sessionRef,
+      sessionRef.collection("privado").doc("clave")
+    );
+
+    const session = sessionSnapshot.data();
+    if (!session) {
+      console.log(`[quiz] sesion=${sesionId} no existe; respuesta de uid=${uid} sin calificar`);
+      return;
+    }
+
+    const correctOptionIndex = readCorrectOptionIndex(keySnapshot.data(), session);
+    if (correctOptionIndex === null) {
+      console.log(`[quiz] sesion=${sesionId} sin respuesta correcta; respuesta de uid=${uid} sin calificar`);
+      return;
+    }
+
+    const launchedAtMillis = sessionSnapshot.createTime?.toMillis() ?? answerSnapshot.createTime.toMillis();
+    const responseTimeMillis = Math.max(0, answerSnapshot.createTime.toMillis() - launchedAtMillis);
+    const durationSeconds = typeof session.duracionSegundos === "number" ? session.duracionSegundos : 0;
+
+    const isCorrect = answerSnapshot.data().indiceSeleccionado === correctOptionIndex;
+    const score = computeScore(isCorrect, responseTimeMillis, durationSeconds);
+
+    try {
+      await answerSnapshot.ref.update({
+        puntaje: score,
+        tiempoRespuestaMs: responseTimeMillis,
+        esCorrecta: isCorrect,
+      });
+      console.log(`[quiz] sesion=${sesionId} uid=${uid} correcta=${isCorrect} puntaje=${score}`);
+    } catch (error) {
+      console.error(`[quiz] no se pudo calificar la respuesta de uid=${uid} en sesion=${sesionId}`, error);
+    }
+  }
+);
